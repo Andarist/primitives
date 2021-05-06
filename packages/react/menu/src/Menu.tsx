@@ -43,11 +43,16 @@ type MenuContextValue = {
   onOpenChange(open: boolean): void;
   contentId: string | null;
   setContentId(): void;
+  triggerRef: React.RefObject<HTMLButtonElement>;
+  contentRef: React.RefObject<HTMLDivElement>;
 };
 
 const [MenuProvider, useMenuContext] = createContext<MenuContextValue>(MENU_NAME);
 
-type MenuOwnProps = React.ComponentProps<typeof MenuImpl>;
+type MenuOwnProps = Polymorphic.Merge<
+  React.ComponentProps<typeof MenuNested>,
+  React.ComponentProps<typeof MenuImpl>
+>;
 
 const Menu: React.FC<MenuOwnProps> = (props) => {
   const { levelCount } = useMenuLevel();
@@ -68,6 +73,8 @@ const MenuImpl: React.FC<MenuImplProps> = (props) => {
   const { open = false, children, onOpenChange } = props;
   const handleOpenChange = useCallbackRef(onOpenChange);
   const [contentId, setContentId] = React.useState<string | null>(null);
+  const triggerRef = React.useRef<HTMLButtonElement>(null);
+  const contentRef = React.useRef<HTMLDivElement>(null);
   const id = useId();
 
   React.useEffect(() => {
@@ -87,6 +94,8 @@ const MenuImpl: React.FC<MenuImplProps> = (props) => {
         onOpenChange={handleOpenChange}
         contentId={contentId}
         setContentId={React.useCallback(() => setContentId(id), [id])}
+        triggerRef={triggerRef}
+        contentRef={contentRef}
       >
         {children}
       </MenuProvider>
@@ -103,7 +112,6 @@ Menu.displayName = MENU_NAME;
 const NESTED_MENU_NAME = 'MenuNested';
 
 type MenuNestedContextValue = {
-  triggerRef: React.RefObject<HTMLButtonElement>;
   focusFirstItem: boolean;
   onMouseOpen(): void;
   onKeyboardOpen(): void;
@@ -121,7 +129,6 @@ type MenuNestedOwnProps = {
 
 const MenuNested: React.FC<MenuNestedOwnProps> = (props) => {
   const { children, open: openProp, defaultOpen, onOpenChange } = props;
-  const triggerRef = React.useRef<HTMLButtonElement>(null);
   const [focusFirstItem, setFocusFirstItem] = React.useState(false);
   const [renderChildren, setRenderChildren] = React.useState(false);
   const [open = false, setOpen] = useControllableState({
@@ -142,7 +149,6 @@ const MenuNested: React.FC<MenuNestedOwnProps> = (props) => {
 
   return (
     <NestedMenuProvider
-      triggerRef={triggerRef}
       focusFirstItem={focusFirstItem}
       onMouseOpen={React.useCallback(() => {
         setOpen(true);
@@ -330,10 +336,8 @@ const MenuContentImpl = React.forwardRef((props, forwardedRef) => {
     ...contentProps
   } = props;
   const context = useMenuContext(CONTENT_NAME);
-  const contentRef = React.useRef<HTMLDivElement>(null);
   const typeaheadProps = useMenuTypeahead();
   const { getItems } = useCollection();
-
   const [currentItemId, setCurrentItemId] = React.useState<string | null>(null);
   const [
     isPermittedPointerDownOutsideEvent,
@@ -349,18 +353,18 @@ const MenuContentImpl = React.forwardRef((props, forwardedRef) => {
 
   // Hide everything from ARIA except the `MenuContent`
   React.useEffect(() => {
-    const content = contentRef.current;
+    const content = context.contentRef.current;
     if (content) return hideOthers(content);
-  }, []);
+  }, [context.contentRef]);
 
   return (
     <PortalWrapper>
       <ScrollLockWrapper>
         <MenuContentProvider
           onItemLeave={React.useCallback(() => {
-            contentRef.current?.focus();
+            context.contentRef.current?.focus();
             setCurrentItemId(null);
-          }, [])}
+          }, [context.contentRef])}
         >
           <FocusScope
             // clicking outside may raise a focusout event, which may get trapped.
@@ -424,7 +428,7 @@ const MenuContentImpl = React.forwardRef((props, forwardedRef) => {
                       role="menu"
                       {...focusScopeProps}
                       {...contentProps}
-                      ref={composeRefs(forwardedRef, contentRef, focusScopeProps.ref)}
+                      ref={composeRefs(forwardedRef, context.contentRef, focusScopeProps.ref)}
                       style={{
                         ...dismissableLayerProps.style,
                         outline: 'none',
@@ -458,7 +462,7 @@ const MenuContentImpl = React.forwardRef((props, forwardedRef) => {
                       onKeyDown={composeEventHandlers(
                         contentProps.onKeyDown,
                         composeEventHandlers(focusScopeProps.onKeyDown, (event) => {
-                          const content = contentRef.current;
+                          const content = context.contentRef.current;
                           if (event.target !== content) return;
                           if (!ALL_KEYS.includes(event.key)) return;
                           event.preventDefault();
@@ -510,9 +514,8 @@ type MenuNestedContentPrimitive = Polymorphic.ForwardRefComponent<
 const MenuNestedContent = React.forwardRef((props, forwardedRef) => {
   const { forceMount, ...contentProps } = props;
   const context = useMenuContext(NESTED_MENU_CONTENT_NAME);
-  const subMenuContext = useNestedMenuContext(NESTED_MENU_CONTENT_NAME);
-  const subMenuContentRef = React.useRef<HTMLDivElement>(null);
-  const trigger = subMenuContext.triggerRef.current;
+  const nestedMenuContext = useNestedMenuContext(NESTED_MENU_CONTENT_NAME);
+  const trigger = context.triggerRef.current;
 
   /**
    * We need to programatically focus the menu based on open state
@@ -520,9 +523,9 @@ const MenuNestedContent = React.forwardRef((props, forwardedRef) => {
    * As a result, `FocusScope` won't re-focus the menu if a cancellation event occurs during an exit animation
    */
   React.useEffect(() => {
-    const content = subMenuContentRef.current;
+    const content = context.contentRef.current;
     if (content && context.open) content.focus();
-  }, [context.open]);
+  }, [context.open, context.contentRef]);
 
   return (
     <Presence present={forceMount || context.open}>
@@ -535,7 +538,7 @@ const MenuNestedContent = React.forwardRef((props, forwardedRef) => {
           portalled
           disableOutsidePointerEvents={false}
           disableOutsideScroll={false}
-          ref={composeRefs(forwardedRef, subMenuContentRef)}
+          ref={forwardedRef}
           onKeyDown={composeEventHandlers(contentProps.onKeyDown, (event) => {
             if (event.key === 'ArrowLeft') {
               // Close a single level
@@ -548,7 +551,7 @@ const MenuNestedContent = React.forwardRef((props, forwardedRef) => {
             trigger?.focus()
           )}
           onEntryFocus={(event) => {
-            if (!subMenuContext.focusFirstItem) {
+            if (!nestedMenuContext.focusFirstItem) {
               event.preventDefault();
             }
           }}
@@ -886,7 +889,7 @@ const MenuTriggerImpl = React.forwardRef((props, forwardedRef) => {
       data-state={getOpenState(context.open)}
       {...triggerProps}
       as={as}
-      ref={forwardedRef}
+      ref={composeRefs(forwardedRef, context.triggerRef)}
     />
   );
 }) as MenuTriggerImplPrimitive;
@@ -911,7 +914,7 @@ type MenuNestedTriggerPrimitive = Polymorphic.ForwardRefComponent<
 const MenuNestedTrigger = React.forwardRef((props, forwardedRef) => {
   const { disabled, ...triggerProps } = props;
   const context = useMenuContext(NESTED_MENU_TRIGGER_NAME);
-  const subMenuContext = useNestedMenuContext(NESTED_MENU_TRIGGER_NAME);
+  const nestedMenuContext = useNestedMenuContext(NESTED_MENU_TRIGGER_NAME);
   const [mouseInteracting, setMouseInteracting] = React.useState(false);
 
   return (
@@ -926,7 +929,7 @@ const MenuNestedTrigger = React.forwardRef((props, forwardedRef) => {
     >
       <MenuTriggerImpl
         {...triggerProps}
-        ref={composeRefs(forwardedRef, subMenuContext.triggerRef)}
+        ref={forwardedRef}
         onMouseMove={composeEventHandlers(triggerProps.onMouseMove, (event) => {
           // Prevent refocusing trigger which causes premature menu close
           event.preventDefault();
@@ -946,12 +949,12 @@ const MenuNestedTrigger = React.forwardRef((props, forwardedRef) => {
          * This solves a sticky open state problem when certain browser controls (e.g. devtools inspect overlay) are given focus
          * This is because mouse events continue to fire while `onDismiss` in `DismissableLayer` won't get called due to it being a focus outside check
          */
-        onFocus={composeEventHandlers(triggerProps.onFocus, (event) => {
-          if (mouseInteracting) subMenuContext.onMouseOpen();
+        onFocus={composeEventHandlers(triggerProps.onFocus, () => {
+          if (mouseInteracting) nestedMenuContext.onMouseOpen();
         })}
         onKeyDown={composeEventHandlers(triggerProps.onKeyDown, (event) => {
           setMouseInteracting(false);
-          if (['Enter', ' ', 'ArrowRight'].includes(event.key)) subMenuContext.onKeyboardOpen();
+          if (['Enter', ' ', 'ArrowRight'].includes(event.key)) nestedMenuContext.onKeyboardOpen();
         })}
       />
     </MenuItem>

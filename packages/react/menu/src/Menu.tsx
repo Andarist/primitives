@@ -210,7 +210,7 @@ const MenuContent = React.forwardRef((props, forwardedRef) => {
     <Presence present={forceMount || context.open}>
       <CollectionSlot>
         {isSubMenu ? (
-          <MenuNestedContent {...props} />
+          <MenuNestedContent {...contentProps} />
         ) : (
           <MenuContentImpl
             data-state={getOpenState(context.open)}
@@ -907,7 +907,6 @@ const MenuNestedTrigger = React.forwardRef((props, forwardedRef) => {
         onMouseMove={composeEventHandlers(triggerProps.onMouseMove, (event) => {
           // Prevent refocusing trigger which causes premature menu close
           event.preventDefault();
-
           if (!disabled && !mouseInteracting && !context.open) {
             setMouseInteracting(true);
             event.currentTarget.focus();
@@ -922,20 +921,21 @@ const MenuNestedTrigger = React.forwardRef((props, forwardedRef) => {
          * We hook into focus to control menu visibility rather than mouse events
          * This solves a sticky open state problem when certain browser controls (e.g. devtools inspect overlay) are given focus
          * This is because mouse events continue to fire while `onDismiss` in `DismissableLayer` won't get called due to it being a focus outside check
+         *
+         * We also need to programatically focus the menu due to animation cancellation in `Presence` not triggering a components lifecycle effects (by design)
+         * As a result, `FocusScope` won't re-focus the menu if a cancellation event occurs during an exit animation
          */
         onFocus={composeEventHandlers(triggerProps.onFocus, () => {
-          if (mouseInteracting) nestedMenuContext.onMouseOpen();
+          if (mouseInteracting) {
+            nestedMenuContext.onMouseOpen();
+            context.contentRef.current?.focus();
+          }
         })}
+        onBlur={composeEventHandlers(triggerProps.onBlur, () => setMouseInteracting(false))}
         onKeyDown={composeEventHandlers(triggerProps.onKeyDown, (event) => {
           setMouseInteracting(false);
           if (['Enter', ' ', 'ArrowRight'].includes(event.key)) {
             nestedMenuContext.onKeyboardOpen();
-
-            /**
-             * We need to programatically focus the menu here
-             * due to animation cancellation in `Presence` not triggering a components lifecycle effects (by design)
-             * As a result, `FocusScope` won't re-focus the menu if a cancellation event occurs during an exit animation
-             */
             context.contentRef.current?.focus();
           }
         })}

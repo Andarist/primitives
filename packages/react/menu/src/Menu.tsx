@@ -206,12 +206,12 @@ const MenuContent = React.forwardRef((props, forwardedRef) => {
   const { isSubMenu } = useMenuLevel();
   const context = useMenuContext(CONTENT_NAME);
 
-  if (isSubMenu) {
-    return <MenuNestedContent {...props} />;
-  } else {
-    return (
-      <Presence present={forceMount || context.open}>
-        <CollectionSlot>
+  return (
+    <Presence present={forceMount || context.open}>
+      <CollectionSlot>
+        {isSubMenu ? (
+          <MenuNestedContent {...props} />
+        ) : (
           <MenuContentImpl
             data-state={getOpenState(context.open)}
             {...contentProps}
@@ -219,10 +219,10 @@ const MenuContent = React.forwardRef((props, forwardedRef) => {
             onEntryFocus={(event) => event.preventDefault()}
             ref={forwardedRef}
           />
-        </CollectionSlot>
-      </Presence>
-    );
-  }
+        )}
+      </CollectionSlot>
+    </Presence>
+  );
 }) as MenuContentPrimitive;
 
 type MenuContentImplOwnProps = Polymorphic.Merge<
@@ -492,18 +492,9 @@ MenuContent.displayName = CONTENT_NAME;
 
 const NESTED_MENU_CONTENT_NAME = 'MenuNestedContent';
 
-type MenuNestedContentOwnProps = Polymorphic.Merge<
-  Omit<
-    Polymorphic.OwnProps<typeof MenuContentImpl>,
-    'portalled' | 'disableOutsidePointerEvents' | 'disableOutsideScroll'
-  >,
-  {
-    /**
-     * Used to force mounting when more control is needed. Useful when
-     * controlling animation with React animation libraries.
-     */
-    forceMount?: true;
-  }
+type MenuNestedContentOwnProps = Omit<
+  Polymorphic.OwnProps<typeof MenuContentImpl>,
+  'portalled' | 'disableOutsidePointerEvents' | 'disableOutsideScroll' | 'align' | 'side'
 >;
 
 type MenuNestedContentPrimitive = Polymorphic.ForwardRefComponent<
@@ -512,65 +503,48 @@ type MenuNestedContentPrimitive = Polymorphic.ForwardRefComponent<
 >;
 
 const MenuNestedContent = React.forwardRef((props, forwardedRef) => {
-  const { forceMount, ...contentProps } = props;
   const context = useMenuContext(NESTED_MENU_CONTENT_NAME);
   const nestedMenuContext = useNestedMenuContext(NESTED_MENU_CONTENT_NAME);
   const trigger = context.triggerRef.current;
 
-  /**
-   * We need to programatically focus the menu based on open state
-   * This is due to animation cancellation in `Presence` not triggering a components lifecycle effects (by design)
-   * As a result, `FocusScope` won't re-focus the menu if a cancellation event occurs during an exit animation
-   */
-  React.useEffect(() => {
-    const content = context.contentRef.current;
-    if (content && context.open) content.focus();
-  }, [context.open, context.contentRef]);
-
   return (
-    <Presence present={forceMount || context.open}>
-      <CollectionSlot>
-        <MenuContentImpl
-          data-state={getOpenState(context.open)}
-          {...contentProps}
-          side="right"
-          align="start"
-          portalled
-          disableOutsidePointerEvents={false}
-          disableOutsideScroll={false}
-          ref={forwardedRef}
-          onKeyDown={composeEventHandlers(contentProps.onKeyDown, (event) => {
-            if (event.key === 'ArrowLeft') {
-              // Close a single level
-              event.stopPropagation();
-              context.onOpenChange(false);
-              trigger?.focus();
-            }
-          })}
-          onEscapeKeyDown={composeEventHandlers(contentProps.onEscapeKeyDown, () =>
-            trigger?.focus()
-          )}
-          onEntryFocus={(event) => {
-            if (!nestedMenuContext.focusFirstItem) {
-              event.preventDefault();
-            }
-          }}
-          /**
-           * Prevent default behavior of focusing previous element on close
-           * This stops the focus jumping around when moving the mouse quickly between triggers
-           */
-          onCloseAutoFocus={composeEventHandlers(contentProps.onCloseAutoFocus, (event) =>
-            event.preventDefault()
-          )}
-          // Prevent needlessly dismissing the menu when clicking the trigger
-          onPointerDownOutside={composeEventHandlers(contentProps.onPointerDownOutside, (event) => {
-            if (trigger?.contains(event.target as HTMLElement)) {
-              event.preventDefault();
-            }
-          })}
-        />
-      </CollectionSlot>
-    </Presence>
+    <MenuContentImpl
+      data-state={getOpenState(context.open)}
+      {...props}
+      side="right"
+      align="start"
+      portalled
+      disableOutsidePointerEvents={false}
+      disableOutsideScroll={false}
+      ref={forwardedRef}
+      onKeyDown={composeEventHandlers(props.onKeyDown, (event) => {
+        if (event.key === 'ArrowLeft') {
+          // Close a single level
+          event.stopPropagation();
+          context.onOpenChange(false);
+          trigger?.focus();
+        }
+      })}
+      onEscapeKeyDown={composeEventHandlers(props.onEscapeKeyDown, () => trigger?.focus())}
+      onEntryFocus={(event) => {
+        if (!nestedMenuContext.focusFirstItem) {
+          event.preventDefault();
+        }
+      }}
+      /**
+       * Prevent default behavior of focusing previous element on close
+       * This stops the focus jumping around when moving the mouse quickly between triggers
+       */
+      onCloseAutoFocus={composeEventHandlers(props.onCloseAutoFocus, (event) =>
+        event.preventDefault()
+      )}
+      // Prevent needlessly dismissing the menu when clicking the trigger
+      onPointerDownOutside={composeEventHandlers(props.onPointerDownOutside, (event) => {
+        if (trigger?.contains(event.target as HTMLElement)) {
+          event.preventDefault();
+        }
+      })}
+    />
   );
 }) as MenuNestedContentPrimitive;
 
@@ -954,7 +928,16 @@ const MenuNestedTrigger = React.forwardRef((props, forwardedRef) => {
         })}
         onKeyDown={composeEventHandlers(triggerProps.onKeyDown, (event) => {
           setMouseInteracting(false);
-          if (['Enter', ' ', 'ArrowRight'].includes(event.key)) nestedMenuContext.onKeyboardOpen();
+          if (['Enter', ' ', 'ArrowRight'].includes(event.key)) {
+            nestedMenuContext.onKeyboardOpen();
+
+            /**
+             * We need to programatically focus the menu here
+             * due to animation cancellation in `Presence` not triggering a components lifecycle effects (by design)
+             * As a result, `FocusScope` won't re-focus the menu if a cancellation event occurs during an exit animation
+             */
+            context.contentRef.current?.focus();
+          }
         })}
       />
     </MenuItem>

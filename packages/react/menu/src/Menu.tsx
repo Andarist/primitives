@@ -42,36 +42,28 @@ type MenuContextValue = {
   open: boolean;
   onOpenChange(open: boolean): void;
   contentId: string | null;
-  setContentId(): void;
+  onTriggerPresence(): void;
   triggerRef: React.RefObject<HTMLButtonElement>;
   contentRef: React.RefObject<HTMLDivElement>;
 };
 
 const [MenuProvider, useMenuContext] = createContext<MenuContextValue>(MENU_NAME);
 
-type MenuOwnProps = Polymorphic.Merge<
-  React.ComponentProps<typeof MenuNested>,
-  React.ComponentProps<typeof MenuImpl>
->;
-
-const Menu: React.FC<MenuOwnProps> = (props) => {
-  const { levelCount } = useMenuLevel();
-
-  return (
-    <MenuLevelProvider levelCount={levelCount + 1}>
-      {levelCount > 0 ? <MenuNested {...props} /> : <MenuImpl {...props} />}
-    </MenuLevelProvider>
-  );
-};
-
-type MenuImplProps = {
+type MenuOwnProps = {
   open?: boolean;
   onOpenChange?(open: boolean): void;
+  defaultOpen?: boolean;
 };
 
-const MenuImpl: React.FC<MenuImplProps> = (props) => {
-  const { open = false, children, onOpenChange } = props;
+const Menu: React.FC<MenuOwnProps> = (props) => {
+  const { open: openProp, children, onOpenChange, defaultOpen } = props;
+  const { levelCount } = useMenuLevel();
   const handleOpenChange = useCallbackRef(onOpenChange);
+  const [open = false, setOpen] = useControllableState({
+    prop: openProp,
+    defaultProp: defaultOpen,
+    onChange: onOpenChange,
+  });
   const [contentId, setContentId] = React.useState<string | null>(null);
   const triggerRef = React.useRef<HTMLButtonElement>(null);
   const contentRef = React.useRef<HTMLDivElement>(null);
@@ -88,18 +80,20 @@ const MenuImpl: React.FC<MenuImplProps> = (props) => {
   }, [handleOpenChange]);
 
   return (
-    <PopperPrimitive.Root>
-      <MenuProvider
-        open={open}
-        onOpenChange={handleOpenChange}
-        contentId={contentId}
-        setContentId={React.useCallback(() => setContentId(id), [id])}
-        triggerRef={triggerRef}
-        contentRef={contentRef}
-      >
-        {children}
-      </MenuProvider>
-    </PopperPrimitive.Root>
+    <MenuLevelProvider levelCount={levelCount + 1}>
+      <PopperPrimitive.Root>
+        <MenuProvider
+          open={open}
+          onOpenChange={setOpen}
+          contentId={contentId}
+          onTriggerPresence={React.useCallback(() => setContentId(id), [id])}
+          triggerRef={triggerRef}
+          contentRef={contentRef}
+        >
+          {levelCount > 0 ? <MenuNested>{children}</MenuNested> : children}
+        </MenuProvider>
+      </PopperPrimitive.Root>
+    </MenuLevelProvider>
   );
 };
 
@@ -113,29 +107,17 @@ const NESTED_MENU_NAME = 'MenuNested';
 
 type MenuNestedContextValue = {
   focusFirstItem: boolean;
-  onMouseOpen(): void;
-  onKeyboardOpen(): void;
+  onMenuOpen(event: React.KeyboardEvent | React.FocusEvent): void;
 };
 
 const [NestedMenuProvider, useNestedMenuContext] = createContext<MenuNestedContextValue>(
   NESTED_MENU_NAME
 );
 
-type MenuNestedOwnProps = {
-  open?: boolean;
-  onOpenChange?(open: boolean): void;
-  defaultOpen?: boolean;
-};
-
-const MenuNested: React.FC<MenuNestedOwnProps> = (props) => {
-  const { children, open: openProp, defaultOpen, onOpenChange } = props;
+const MenuNested: React.FC = ({ children }) => {
+  const { onOpenChange, contentRef } = useMenuContext(NESTED_MENU_NAME);
   const [focusFirstItem, setFocusFirstItem] = React.useState(false);
   const [renderChildren, setRenderChildren] = React.useState(false);
-  const [open = false, setOpen] = useControllableState({
-    prop: openProp,
-    defaultProp: defaultOpen,
-    onChange: onOpenChange,
-  });
 
   /**
    * We defer rendering of child elements until ready, this ensures that when using controlled props:
@@ -150,18 +132,20 @@ const MenuNested: React.FC<MenuNestedOwnProps> = (props) => {
   return (
     <NestedMenuProvider
       focusFirstItem={focusFirstItem}
-      onMouseOpen={React.useCallback(() => {
-        setOpen(true);
-        setFocusFirstItem(false);
-      }, [setOpen])}
-      onKeyboardOpen={React.useCallback(() => {
-        setOpen(true);
-        setFocusFirstItem(true);
-      }, [setOpen])}
+      onMenuOpen={React.useCallback(
+        (event) => {
+          onOpenChange(true);
+          setFocusFirstItem(event.type === 'keydown');
+          /**
+           * We need to programatically focus the menu due to animation cancellation in `Presence` not triggering a components lifecycle effects (by design)
+           * As a result, `FocusScope` won't re-focus the menu if a cancellation event occurs during an exit animation
+           */
+          contentRef.current?.focus();
+        },
+        [onOpenChange, contentRef]
+      )}
     >
-      <MenuImpl open={open} onOpenChange={setOpen}>
-        {renderChildren && children}
-      </MenuImpl>
+      {renderChildren && children}
     </NestedMenuProvider>
   );
 };
@@ -494,7 +478,7 @@ const NESTED_MENU_CONTENT_NAME = 'MenuNestedContent';
 
 type MenuNestedContentOwnProps = Omit<
   Polymorphic.OwnProps<typeof MenuContentImpl>,
-  'portalled' | 'disableOutsidePointerEvents' | 'disableOutsideScroll' | 'align' | 'side'
+  'portalled' | 'disableOutsidePointerEvents' | 'disableOutsideScroll' | 'align'
 >;
 
 type MenuNestedContentPrimitive = Polymorphic.ForwardRefComponent<
@@ -510,9 +494,9 @@ const MenuNestedContent = React.forwardRef((props, forwardedRef) => {
   return (
     <MenuContentImpl
       data-state={getOpenState(context.open)}
+      align="start"
       {...props}
       side="right"
-      align="start"
       portalled
       disableOutsidePointerEvents={false}
       disableOutsideScroll={false}
@@ -521,7 +505,6 @@ const MenuNestedContent = React.forwardRef((props, forwardedRef) => {
         if (event.key === 'ArrowLeft') {
           // Close a single level
           event.stopPropagation();
-          context.onOpenChange(false);
           trigger?.focus();
         }
       })}
@@ -655,6 +638,132 @@ const MenuItem = React.forwardRef((props, forwardedRef) => {
 }) as MenuItemPrimitive;
 
 MenuItem.displayName = ITEM_NAME;
+
+/* -------------------------------------------------------------------------------------------------
+ * MenuTrigger
+ * -----------------------------------------------------------------------------------------------*/
+
+const TRIGGER_NAME = 'MenuTrigger';
+const TRIGGER_DEFAULT_TAG = 'button';
+
+type MenuTriggerOwnProps = Polymorphic.Merge<
+  Polymorphic.OwnProps<typeof MenuTriggerImpl>,
+  Polymorphic.OwnProps<typeof MenuNestedTrigger>
+>;
+type MenuTriggerPrimitive = Polymorphic.ForwardRefComponent<
+  Polymorphic.IntrinsicElement<typeof MenuTriggerImpl>,
+  MenuTriggerOwnProps
+>;
+
+const MenuTrigger = React.forwardRef((props, forwardedRef) => {
+  const { onTriggerPresence } = useMenuContext(TRIGGER_NAME);
+  const { isSubMenu } = useMenuLevel();
+
+  React.useEffect(onTriggerPresence, [onTriggerPresence]);
+
+  if (isSubMenu) {
+    return <MenuNestedTrigger {...props} ref={forwardedRef} />;
+  } else {
+    return <MenuTriggerImpl {...props} ref={forwardedRef} />;
+  }
+}) as MenuTriggerPrimitive;
+
+type MenuTriggerImplOwnProps = Polymorphic.OwnProps<typeof MenuAnchor>;
+type MenuTriggerImplPrimitive = Polymorphic.ForwardRefComponent<
+  typeof TRIGGER_DEFAULT_TAG,
+  MenuTriggerImplOwnProps
+>;
+
+const MenuTriggerImpl = React.forwardRef((props, forwardedRef) => {
+  const { as = TRIGGER_DEFAULT_TAG, ...triggerProps } = props;
+  const context = useMenuContext(NESTED_MENU_TRIGGER_NAME);
+
+  return (
+    <MenuAnchor
+      type="button"
+      aria-haspopup="menu"
+      aria-expanded={context.open ? true : undefined}
+      aria-controls={context.open && context.contentId ? context.contentId : undefined}
+      data-state={getOpenState(context.open)}
+      {...triggerProps}
+      as={as}
+      ref={composeRefs(forwardedRef, context.triggerRef)}
+    />
+  );
+}) as MenuTriggerImplPrimitive;
+
+MenuTrigger.displayName = TRIGGER_NAME;
+
+/* -------------------------------------------------------------------------------------------------
+ * MenuNestedTrigger
+ * -----------------------------------------------------------------------------------------------*/
+
+const NESTED_MENU_TRIGGER_NAME = 'MenuNestedTrigger';
+
+type MenuNestedTriggerOwnProps = Polymorphic.Merge<
+  Polymorphic.OwnProps<typeof MenuTriggerImpl>,
+  Omit<Polymorphic.OwnProps<typeof MenuItem>, 'onSelect'>
+>;
+type MenuNestedTriggerPrimitive = Polymorphic.ForwardRefComponent<
+  Polymorphic.IntrinsicElement<typeof MenuTriggerImpl>,
+  MenuNestedTriggerOwnProps
+>;
+
+const MenuNestedTrigger = React.forwardRef((props, forwardedRef) => {
+  const { disabled, ...triggerProps } = props;
+  const context = useMenuContext(NESTED_MENU_TRIGGER_NAME);
+  const nestedMenuContext = useNestedMenuContext(NESTED_MENU_TRIGGER_NAME);
+  const [mouseInteracting, setMouseInteracting] = React.useState(false);
+
+  return (
+    <MenuItem
+      as={Slot}
+      disabled={disabled}
+      // Omit custom onSelect behavior which closes the menu by default
+      onSelect={React.useCallback((event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      }, [])}
+    >
+      <MenuTriggerImpl
+        {...triggerProps}
+        ref={forwardedRef}
+        onMouseMove={composeEventHandlers(triggerProps.onMouseMove, (event) => {
+          // Prevent re-refocusing trigger which causes premature menu close
+          event.preventDefault();
+          if (!disabled && !mouseInteracting && !context.open) {
+            setMouseInteracting(true);
+            event.currentTarget.focus();
+          }
+        })}
+        onMouseLeave={composeEventHandlers(triggerProps.onMouseLeave, (event) => {
+          // Prevent re-focusing content which causes premature menu close
+          event.preventDefault();
+          setMouseInteracting(false);
+        })}
+        /**
+         * We hook into focus to control menu visibility rather than mouse events
+         * This solves a sticky open state problem when certain browser controls (e.g. devtools inspect overlay) are given focus
+         * This is because mouse events continue to fire while `onDismiss` in `DismissableLayer` won't get called due to it being a focus outside check
+         */
+        onFocus={composeEventHandlers(triggerProps.onFocus, (event) => {
+          if (mouseInteracting) {
+            nestedMenuContext.onMenuOpen(event);
+          }
+        })}
+        onBlur={composeEventHandlers(triggerProps.onBlur, () => setMouseInteracting(false))}
+        onKeyDown={composeEventHandlers(triggerProps.onKeyDown, (event) => {
+          setMouseInteracting(false);
+          if (['Enter', ' ', 'ArrowRight'].includes(event.key)) {
+            nestedMenuContext.onMenuOpen(event);
+          }
+        })}
+      />
+    </MenuItem>
+  );
+}) as MenuNestedTriggerPrimitive;
+
+MenuNestedTrigger.displayName = NESTED_MENU_TRIGGER_NAME;
 
 /* -------------------------------------------------------------------------------------------------
  * MenuCheckboxItem
@@ -814,137 +923,6 @@ const MenuItemIndicator = React.forwardRef((props, forwardedRef) => {
 }) as MenuItemIndicatorPrimitive;
 
 MenuItemIndicator.displayName = ITEM_INDICATOR_NAME;
-
-/* -------------------------------------------------------------------------------------------------
- * MenuTrigger
- * -----------------------------------------------------------------------------------------------*/
-
-const TRIGGER_NAME = 'MenuTrigger';
-const TRIGGER_DEFAULT_TAG = 'button';
-
-type MenuTriggerOwnProps = Polymorphic.Merge<
-  Polymorphic.OwnProps<typeof MenuTriggerImpl>,
-  Polymorphic.OwnProps<typeof MenuNestedTrigger>
->;
-type MenuTriggerPrimitive = Polymorphic.ForwardRefComponent<
-  Polymorphic.IntrinsicElement<typeof MenuTriggerImpl>,
-  MenuTriggerOwnProps
->;
-
-const MenuTrigger = React.forwardRef((props, forwardedRef) => {
-  const { setContentId } = useMenuContext(TRIGGER_NAME);
-  const { isSubMenu } = useMenuLevel();
-
-  React.useEffect(setContentId, [setContentId]);
-
-  if (isSubMenu) {
-    return <MenuNestedTrigger {...props} ref={forwardedRef} />;
-  } else {
-    return <MenuTriggerImpl {...props} ref={forwardedRef} />;
-  }
-}) as MenuTriggerPrimitive;
-
-type MenuTriggerImplOwnProps = Polymorphic.OwnProps<typeof MenuAnchor>;
-type MenuTriggerImplPrimitive = Polymorphic.ForwardRefComponent<
-  typeof TRIGGER_DEFAULT_TAG,
-  MenuTriggerImplOwnProps
->;
-
-const MenuTriggerImpl = React.forwardRef((props, forwardedRef) => {
-  const { as = TRIGGER_DEFAULT_TAG, ...triggerProps } = props;
-  const context = useMenuContext(NESTED_MENU_TRIGGER_NAME);
-
-  return (
-    <MenuAnchor
-      type="button"
-      aria-haspopup="menu"
-      aria-expanded={context.open ? true : undefined}
-      aria-controls={context.open && context.contentId ? context.contentId : undefined}
-      data-state={getOpenState(context.open)}
-      {...triggerProps}
-      as={as}
-      ref={composeRefs(forwardedRef, context.triggerRef)}
-    />
-  );
-}) as MenuTriggerImplPrimitive;
-
-MenuTrigger.displayName = TRIGGER_NAME;
-
-/* -------------------------------------------------------------------------------------------------
- * MenuNestedTrigger
- * -----------------------------------------------------------------------------------------------*/
-
-const NESTED_MENU_TRIGGER_NAME = 'MenuNestedTrigger';
-
-type MenuNestedTriggerOwnProps = Polymorphic.Merge<
-  Polymorphic.OwnProps<typeof MenuTriggerImpl>,
-  Omit<Polymorphic.OwnProps<typeof MenuItem>, 'onSelect'>
->;
-type MenuNestedTriggerPrimitive = Polymorphic.ForwardRefComponent<
-  Polymorphic.IntrinsicElement<typeof MenuTriggerImpl>,
-  MenuNestedTriggerOwnProps
->;
-
-const MenuNestedTrigger = React.forwardRef((props, forwardedRef) => {
-  const { disabled, ...triggerProps } = props;
-  const context = useMenuContext(NESTED_MENU_TRIGGER_NAME);
-  const nestedMenuContext = useNestedMenuContext(NESTED_MENU_TRIGGER_NAME);
-  const [mouseInteracting, setMouseInteracting] = React.useState(false);
-
-  return (
-    <MenuItem
-      as={Slot}
-      disabled={disabled}
-      // Omit custom onSelect behavior which closes the menu by default
-      onSelect={React.useCallback((event) => {
-        event.preventDefault();
-        event.stopPropagation();
-      }, [])}
-    >
-      <MenuTriggerImpl
-        {...triggerProps}
-        ref={forwardedRef}
-        onMouseMove={composeEventHandlers(triggerProps.onMouseMove, (event) => {
-          // Prevent refocusing trigger which causes premature menu close
-          event.preventDefault();
-          if (!disabled && !mouseInteracting && !context.open) {
-            setMouseInteracting(true);
-            event.currentTarget.focus();
-          }
-        })}
-        onMouseLeave={composeEventHandlers(triggerProps.onMouseLeave, (event) => {
-          // Prevent focusing content which causes premature menu close
-          event.preventDefault();
-          setMouseInteracting(false);
-        })}
-        /**
-         * We hook into focus to control menu visibility rather than mouse events
-         * This solves a sticky open state problem when certain browser controls (e.g. devtools inspect overlay) are given focus
-         * This is because mouse events continue to fire while `onDismiss` in `DismissableLayer` won't get called due to it being a focus outside check
-         *
-         * We also need to programatically focus the menu due to animation cancellation in `Presence` not triggering a components lifecycle effects (by design)
-         * As a result, `FocusScope` won't re-focus the menu if a cancellation event occurs during an exit animation
-         */
-        onFocus={composeEventHandlers(triggerProps.onFocus, () => {
-          if (mouseInteracting) {
-            nestedMenuContext.onMouseOpen();
-            context.contentRef.current?.focus();
-          }
-        })}
-        onBlur={composeEventHandlers(triggerProps.onBlur, () => setMouseInteracting(false))}
-        onKeyDown={composeEventHandlers(triggerProps.onKeyDown, (event) => {
-          setMouseInteracting(false);
-          if (['Enter', ' ', 'ArrowRight'].includes(event.key)) {
-            nestedMenuContext.onKeyboardOpen();
-            context.contentRef.current?.focus();
-          }
-        })}
-      />
-    </MenuItem>
-  );
-}) as MenuNestedTriggerPrimitive;
-
-MenuNestedTrigger.displayName = NESTED_MENU_TRIGGER_NAME;
 
 /* ---------------------------------------------------------------------------------------------- */
 

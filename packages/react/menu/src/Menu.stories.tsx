@@ -250,7 +250,7 @@ export const Animated = () => {
                 {foodGroup.foods.map((food) => (
                   <MenuItem
                     className={itemClass}
-                    onSelect={() => console.log(food.value)}
+                    onSelect={() => window.alert(food.value)}
                     key={food.value}
                   >
                     {food.label}
@@ -362,8 +362,10 @@ const SubMenu: React.FC<
   }
 > = (props) => {
   const { children, heading = 'Sub Menu', disabled, ...subMenuProps } = props;
+  const [open, setOpen] = React.useState(false);
+
   return (
-    <MenuPrimitive>
+    <MenuPrimitive open={open} onOpenChange={setOpen}>
       <MenuTrigger className={itemClass} disabled={disabled}>
         {heading} →
       </MenuTrigger>
@@ -388,7 +390,7 @@ type MenuOwnProps = Omit<
 const Menu: React.FC<MenuOwnProps> = (props) => {
   const { open = true, children, ...contentProps } = props;
   return (
-    <MenuPrimitive open={open} onOpenChange={() => {}}>
+    <MenuPrimitive open={open}>
       <MenuAnchor />
       <MenuContent
         className={contentClass}
